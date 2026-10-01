@@ -472,7 +472,9 @@ class ProofEngine {
   // Expand the justification chain proving x ~ y.  Each congruence edge is
   // followed by the declaration/congruence edges on the paths connecting its
   // paired arguments, so an auditor can expand *both* the propagation step and
-  // the equations it rests on.
+  // the equations it rests on.  Supporting congruence edges are expanded
+  // recursively, so nested applications (g(f(a)) ~ g(f(b))) unwind all the
+  // way down to the underlying declared equations.
   explain(x, y) {
     const adj = new Map();
     const link = (u, v, rec) => {
@@ -515,26 +517,26 @@ class ProofEngine {
 
     const chain = [];
     const seen = new Set();
-    const pushEdge = (rec, supports) => {
+    // The seen set is keyed per (edge, role) and checked before recursing, so
+    // expansion terminates even if argument paths revisit an edge.
+    const expand = (rec, supports) => {
       const key = `${rec.child}-${rec.parent}-${rec.reason.step}-${supports ? 's' : 'm'}`;
       if (seen.has(key)) return;
       seen.add(key);
       const rendered = this._renderReason(rec);
       if (supports) rendered.supportsCongruence = true;
       chain.push(rendered);
-    };
-
-    for (const rec of main) {
-      pushEdge(rec, false);
       if (rec.reason.type === 'congruence') {
         const ta = this.terms[rec.reason.aId];
         const tb = this.terms[rec.reason.bId];
         for (let k = 0; k < ta.args.length; k++) {
           const sub = findPath(ta.args[k], tb.args[k]);
-          if (sub) for (const subRec of sub) pushEdge(subRec, true);
+          if (sub) for (const subRec of sub) expand(subRec, true);
         }
       }
-    }
+    };
+
+    for (const rec of main) expand(rec, false);
     return chain;
   }
 

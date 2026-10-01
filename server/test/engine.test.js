@@ -78,6 +78,44 @@ test('claim 返回可展开的声明与同余依据', () => {
   assert.ok(cong.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'));
 });
 
+test('嵌套声称 g(f(a))=g(f(b))：依据可追溯到第 0 步 declared 边', () => {
+  const { trace, failure } = run(['a', 'b'], { f: 1, g: 1 }, [
+    { op: 'eq', left: 'a', right: 'b' }, // 第 0 步：基础声明
+    { op: 'claim', left: 'g(f(a))', right: 'g(f(b))' }, // 第 1 步：两级嵌套声称
+  ]);
+  assert.equal(failure, null);
+  const claim = trace.find((s) => s.op === 'claim');
+  assert.equal(claim.verdict, 'equal');
+
+  // 同一份依据必须同时包含：g 的同余边、f 的同余边、第 0 步 a=b 的 declared 边
+  const gEdge = claim.evidence.find((e) => e.kind === 'congruence' && e.function === 'g');
+  assert.ok(gEdge, '缺少 g 的同余边');
+  assert.ok(
+    gEdge.matchedArguments.some((m) => m.arg === 'f(a)' && m.congruentTo === 'f(b)'),
+    'g 的同余边应配对实参 f(a) 与 f(b)'
+  );
+
+  const fEdge = claim.evidence.find((e) => e.kind === 'congruence' && e.function === 'f');
+  assert.ok(fEdge, '缺少支撑 g 的 f 同余边');
+  assert.ok(
+    fEdge.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'),
+    'f 的同余边应配对实参 a 与 b'
+  );
+
+  const declared = claim.evidence.find((e) => e.kind === 'declared');
+  assert.ok(declared, '缺少支撑 f(a)=f(b) 的 declared 边');
+  assert.equal(declared.step, 0, 'declared 边必须追溯到第 0 步的基础声明');
+  assert.deepEqual(
+    [declared.left, declared.right].sort(),
+    ['a', 'b'],
+    'declared 边必须连接 a 与 b'
+  );
+
+  // 审查员可沿依据链从两级同余一路展开到基础声明
+  const kinds = claim.evidence.map((e) => e.kind);
+  assert.deepEqual(kinds.sort(), ['congruence', 'congruence', 'declared']);
+});
+
 // --- 失效作用域：pop 后内层事实不残留 ----------------------------------------
 
 test('pop 回滚内层等式，外层 claim 必须失败', () => {

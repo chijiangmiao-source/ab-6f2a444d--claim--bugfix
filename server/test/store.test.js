@@ -50,6 +50,47 @@ test('同标识改换载荷：明确拒绝（409）且保留旧冻结结果', ()
   assert.equal(again.body.verdict, 'equal');
 });
 
+test('嵌套声称的冻结记录：evidence 保留两级同余与第 0 步 declared 依据', () => {
+  const store = new AuditStore();
+  const payload = {
+    auditId: 'AUDIT-NESTED-1',
+    constants: ['a', 'b'],
+    functions: { f: 1, g: 1 },
+    steps: [
+      { op: 'eq', left: 'a', right: 'b' }, // 第 0 步：基础声明
+      { op: 'claim', left: 'g(f(a))', right: 'g(f(b))' }, // 第 1 步：两级嵌套声称
+    ],
+  };
+  const { status, body } = store.submit(payload);
+  assert.equal(status, 200);
+  assert.equal(body.accepted, true);
+  assert.equal(body.verdict, 'equal');
+
+  const evidence = body.latestClaim.evidence;
+  assert.ok(Array.isArray(evidence), '冻结记录必须携带可展开依据');
+
+  // g 的同余边：g(f(a)) ~ g(f(b))，实参配对 f(a)/f(b)
+  const gEdge = evidence.find((e) => e.kind === 'congruence' && e.function === 'g');
+  assert.ok(gEdge, '缺少 g 的同余边');
+  assert.ok(gEdge.matchedArguments.some((m) => m.arg === 'f(a)' && m.congruentTo === 'f(b)'));
+
+  // f 的同余边：f(a) ~ f(b)，实参配对 a/b
+  const fEdge = evidence.find((e) => e.kind === 'congruence' && e.function === 'f');
+  assert.ok(fEdge, '缺少 f 的同余边');
+  assert.ok(fEdge.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'));
+
+  // 第 0 步 declared 边：a = b，两级同余传播的共同基础
+  const declared = evidence.find((e) => e.kind === 'declared');
+  assert.ok(declared, '缺少支撑 f(a)=f(b) 的第 0 步 declared 边');
+  assert.equal(declared.step, 0);
+  assert.deepEqual([declared.left, declared.right].sort(), ['a', 'b']);
+
+  // 重传回放同一份冻结依据，审查员看到的证据不变
+  const replay = store.submit(payload);
+  assert.equal(replay.body.replayed, true);
+  assert.deepEqual(replay.body.latestClaim.evidence, evidence);
+});
+
 test('失败证明：定位失败步骤并清除页面旧证据（accepted=false, trace 截断）', () => {
   const store = new AuditStore();
   const payload = basePayload();
