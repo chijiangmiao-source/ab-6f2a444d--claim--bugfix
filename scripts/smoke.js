@@ -8,6 +8,10 @@
 //   3. identical replay is frozen (replayed=true)
 //   4. same id with changed payload is rejected (409 PAYLOAD_CHANGED)
 //   5. a stale-scope claim fails at the located step
+//   6. a same-level neq/eq clash is rejected (SAME_LEVEL_CONFLICT)
+//   7. the frozen record can be read back
+//   8. a nested congruence claim's evidence keeps both propagation levels
+//      plus the original declared equation (g(f(a))=g(f(b)) resting on a=b)
 // Exits non-zero on the first unmet expectation.
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
@@ -137,6 +141,26 @@ async function waitForHealthy(retries = 30) {
   console.log('7) 读取冻结记录');
   const r7 = await request('GET', `/api/audits/${valid.auditId}`);
   check('GET 回放记录 200', r7.status === 200 && r7.body.auditId === valid.auditId);
+
+  console.log('8) 嵌套同余声称 -> evidence 含两级同余与第 0 步 declared 边');
+  const nested = {
+    auditId: 'SMOKE-NESTED-1',
+    constants: ['a', 'b'],
+    functions: { f: 1, g: 1 },
+    steps: [
+      { op: 'eq', left: 'a', right: 'b' },
+      { op: 'claim', left: 'g(f(a))', right: 'g(f(b))' },
+    ],
+  };
+  const r8 = await request('POST', '/api/audits', nested);
+  const ev = (r8.body.latestClaim && r8.body.latestClaim.evidence) || [];
+  const gEdge = ev.find((e) => e.kind === 'congruence' && e.function === 'g');
+  const fEdge = ev.find((e) => e.kind === 'congruence' && e.function === 'f');
+  const declared = ev.find((e) => e.kind === 'declared');
+  check('裁决 accepted/equal', r8.status === 200 && r8.body.accepted === true && r8.body.verdict === 'equal', r8.body.verdict);
+  check('evidence 含 g 的同余边（实参 f(a)~f(b)）', !!gEdge && gEdge.matchedArguments.some((m) => m.arg === 'f(a)' && m.congruentTo === 'f(b)'), gEdge);
+  check('evidence 含 f 的同余边（实参 a~b）', !!fEdge && fEdge.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'), fEdge);
+  check('evidence 含第 0 步 a=b 的 declared 边', !!declared && declared.step === 0 && [declared.left, declared.right].sort().join(',') === 'a,b', declared);
 
   if (failures) {
     console.error(`\n冒烟失败 ${failures} 项`);

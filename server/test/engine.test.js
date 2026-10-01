@@ -78,6 +78,49 @@ test('claim 返回可展开的声明与同余依据', () => {
   assert.ok(cong.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'));
 });
 
+test('嵌套同余：claim 依据可追溯两级传播与第 0 步 declared 边', () => {
+  const { failure, trace } = run(['a', 'b'], { f: 1, g: 1 }, [
+    { op: 'eq', left: 'a', right: 'b' }, // 第 0 步：基础声明
+    { op: 'claim', left: 'g(f(a))', right: 'g(f(b))' }, // 第 1 步：嵌套声称
+  ]);
+  assert.equal(failure, null);
+  const claim = trace[1];
+  assert.equal(claim.op, 'claim');
+  assert.equal(claim.verdict, 'equal');
+
+  const evidence = claim.evidence;
+  assert.ok(Array.isArray(evidence), 'evidence 应为可展开数组');
+
+  // 第一级：g 的同余边（主路径，实参 f(a) ~ f(b)）
+  const gEdge = evidence.find((e) => e.kind === 'congruence' && e.function === 'g');
+  assert.ok(gEdge, 'evidence 应包含 g 的同余边');
+  assert.ok(
+    gEdge.matchedArguments.some((m) => m.arg === 'f(a)' && m.congruentTo === 'f(b)'),
+    'g 的同余边应记录实参对应 f(a) ~ f(b)'
+  );
+
+  // 第二级：f 的同余边（支撑 g，实参 a ~ b）
+  const fEdge = evidence.find((e) => e.kind === 'congruence' && e.function === 'f');
+  assert.ok(fEdge, 'evidence 应包含 f 的同余边');
+  assert.ok(
+    fEdge.matchedArguments.some((m) => m.arg === 'a' && m.congruentTo === 'b'),
+    'f 的同余边应记录实参对应 a ~ b'
+  );
+
+  // 根基：第 0 步 a = b 的 declared 边，两级同余传播都建立在它之上
+  const declared = evidence.find((e) => e.kind === 'declared');
+  assert.ok(declared, 'evidence 应包含支撑 f(a)=f(b) 的 declared 边');
+  assert.equal(declared.step, 0, 'declared 边应定位到第 0 步声明');
+  assert.deepEqual(
+    [declared.left, declared.right].sort(),
+    ['a', 'b'],
+    'declared 边应连接 a 与 b'
+  );
+
+  // 整条依据链只有三类边：g 同余、f 同余、a=b 声明，无遗漏无冗余
+  assert.equal(evidence.length, 3);
+});
+
 // --- 失效作用域：pop 后内层事实不残留 ----------------------------------------
 
 test('pop 回滚内层等式，外层 claim 必须失败', () => {
